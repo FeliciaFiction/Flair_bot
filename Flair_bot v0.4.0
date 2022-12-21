@@ -150,23 +150,25 @@ Function New-redditremovalnotice {
     #Build request-body
     $removalpostbody = @{
     thing_id = $postid
-    text = "Dear $author, your post has been removed for the following reason: $Removalreason. 
+    text = "Dear [$author](https://reddit.com/u/$author), your post has been removed for the following reason: $Removalreason. 
     This is a bot, If you have questions or concerns about this removal, please [message the moderators](https://www.reddit.com/message/compose?to=/r/$subname&subject=&message=)"
     }
     # Execute request
     Invoke-RestMethod "$apiurl/api/comment" -body $removalpostbody -headers $headers -Method POST -useragent $useragent
     
-    # Get removal-comment
+    # Get removal-comment 
     $comments = Invoke-RestMethod https://www.reddit.com/u/$username/.json 
     $comments = $comments.data.children.data
     $modcomment = $comments[0..0].name
 
+    # Sticky and mod-flair the removal comment
     $modcommentbody = @{
         how = 'yes'
         id = $modcomment
         sticky = 'True'
     }
     
+    # Execute and mod-flair request
     Invoke-RestMethod "$apiurl/api/distinguish" -body $modcommentbody -headers $headers -Method POST -useragent $useragent
     
 
