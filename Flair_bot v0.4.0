@@ -29,10 +29,6 @@ Version: 0.2.2
 
 This script is made to moderate /r/$subname
 
-This script uses the Microsoft module Secretvault, if it's not registered yet you'll get prompts to enter the values
-For documentation on geting a client ID and Client Secret: https://github.com/reddit-archive/reddit/wiki/OAuth2
-To use this bot, use the global variables to get started. I'm not a programmer so if the code looks chunky you'll 
-know why ;)
 I expect you can run multiple instances with the same ClientID and Secret but with different subreddits, the Reddit
 rate-limiting could be a factor to keep in mind, I've not included it in this script.
 
@@ -247,15 +243,15 @@ write-host (get-date)"Banned user: $user" 'for' $reason
     
     # Get posts with edited flair to find action-flairs
     $moderatedposts = Invoke-RestMethod $oauthsubreddit/about/log?type=editflair  -Headers $headers -UserAgent $useragent
-    $moderatedposts = $moderatedposts.data.children.data
+    $moderatedposts = $moderatedposts.data.children.data | Where-Object {$_.target_fullname -notin $actionedposts}
 
-    Write-host (get-date) 'Found' $moderatedposts.count 'posts with flair, checking for actionflairs.'
+    Write-host (get-date) 'Found' $moderatedposts.count 'unactioned posts with flair, checking for actionflairs.'
     
     foreach ($post in $moderatedposts){
         # Get posts
         $posturl = $post.target_permalink
         $postoutput = invoke-restmethod "$apiurl/$posturl" -Headers $headers -UserAgent $useragent
-        $postoutput = $postoutput.data.children.data | where {$_.name -match 't3_'}
+        $postoutput = $postoutput.data.children.data | where-object {$_.name -match 't3_'}
         
 
         # Check if post is unactioned
@@ -295,5 +291,5 @@ write-host (get-date)"Banned user: $user" 'for' $reason
             } # Ende if post unactioned and actionflair
             clear-variable unactioned, postaction, post, postoutput
 
-    }   #End foreach $post in $posts loop 
+    }   #End foreach $post in $moderatedposts loop 
     Write-host (Get-date) 'Actioning posts done.'
