@@ -1,7 +1,19 @@
 <###
-   
-Version: 0.3.1
-    Added to Github
+Version: 0.4.2
+    Capabilities
+    - Added removal-modmail (it leaves a sent message in the modmail as unread though)
+    - Updated the removal message to have better formating
+    Fixes
+    - Ban user has been updated to work properly
+Version: 0.4.1
+    Fixes: 
+    - Checked the postid against the latest comment to prevent stickying the wrong comment
+    - Moved Nudenet to it's own script, this script is OK to run on a Raspberry Pi with Powershell
+    - Read csv from the subs Wiki (; delimeted) to determine postactions
+    - Fixed an issue with the invoke-redditban function
+    Capabilities
+    - Added /u/ to the header for removal notices (makes a direct link to the user profile possible)
+
 Version: 0.3.0
     Capabilities:
     - Added Nudenet for NSFW tagged posts
@@ -36,105 +48,63 @@ This script also uses several files in c:\temp, rename these if you're running m
 ###>
 
 # Global variables:
-$username = "your username"                                         # Your Reddit username
-$useragent = "$username's flairbot 0.2.7"                           # Useragent, update version
+$username = ""                                                # Your Reddit username
+$useragent = "$username's flairbot 0.4.2"                      # Useragent, update version
 $subname = "crossdressing"                                          # General subname
 $apiurl = "https://oauth.reddit.com"                                # API url 
-$subreddit = "https://reddit.com/r/$subname"                        # subreddit URL
-$storage = "C:\Temp\$subname\"                                      # Storage per subreddit
+#$subreddit = "https://reddit.com/r/$subname"                       # subreddit URL
+$storage = "/home/kees/tmp/$subname/"                              # Storage per subreddit
+if ((whoami) -eq 'laptop\keesk'){ $storage = "E:\temp\$subname\"}   # override storage if windows laptop
 $oauthsubreddit = "https://oauth.reddit.com/r/$subname"             # Oauth URL for subreddit specific operations
 #$chrome = "C:\Program Files\Google\Chrome\Application\chrome.exe"  # Chrome location (only used for debugging)
 
+# Create dirs if not existing
+if(!(test-path $storage)){New-Item $storage -ItemType Directory}
+
 # Log output
-Start-Transcript $storage\$subname.log -Append  -UseMinimalHeader
-
-# Check presence of secretstore and install if not present
-if ([bool](get-module Microsoft.PowerShell.SecretManagement) -eq $false ) {install-module microsoft.powershell.secretmanagement -Scope CurrentUser }
-if ([bool](get-module Microsoft.PowerShell.SecretStore) -eq $false ) {install-module microsoft.powershell.secretstore -Scope CurrentUser }
-
-# Importert modules secretstore
-Import-Module Microsoft.PowerShell.SecretManagement
-Import-Module microsoft.powershell.secretstore
-
-# Check presence of secretstore
-# If not exist, register immediately
-if ([bool](Get-SecretVault -name $subname | Select-Object name) -eq $false) 
-{ 
-Register-SecretVault -Name Reddit -ModuleName microsoft.powershell.secretstore
-
-Write-Host 'Enter ClientID'
-Read-Host | Set-Secret -name ClientID
-clear-host
-
-Write-Host 'EnterClient secret'
-Read-Host | Set-Secret -name ClientSecret
-clear-host
-
-Write-host 'What is your reddit password'
-Read-Host | Set-Secret -Name RedditWachtwoord
-clear-host
-}
-
-# Build authorizations
+write-host (get-date) (Start-Transcript $storage/$subname.log -Append  -UseMinimalHeader)
 
 Function Get-reddittoken {
-# Secure password uitlezen en secretstore ontgrendelen
-if ((Test-Path $storage\pass.txt) -eq $false){
-    set-location C:\temp
-    mkdir $subname
-    New-Item $storage\pass.txt
-    New-item $storage\actionedposts.txt
-    New-item $storage\actionedNSFWposts.txt
-    Write-host 'Enter the secret-vault password'
-    Read-host | out-file $storage\pass.txt}
+    # API values for authentication
+    $ClientId = ""
+    $clientsecret = ""
+    $password = ""
 
-Write-Host (get-date) 'Unlocking secretstore'
-$pass = ConvertTo-SecureString (get-content $storage\pass.txt) -AsPlainText -Force
-Unlock-SecretStore $pass
-Clear-Variable pass
+    # Build token request
+    $credential = "$($ClientId):$($clientsecret)"
+    $encodedCreds = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($credential))
+    $basicAuthValue = "Basic $encodedCreds"
+    $body = "grant_type=password&username=$username&password=$password"
 
-# API values from secretvault
-$ClientId = Get-Secret -Name ClientID -AsPlainText -Vault $subnmame
-$clientsecret = Get-Secret -Name Clientsecret -AsPlainText  -Vault $subnmame
-$password = Get-Secret -Name RedditWachtwoord -AsPlainText -Vault $subnmame
-# End building authorization
+    # Execute token request
+    $token = Invoke-RestMethod -body $body -Headers @{Authorization = $basicAuthValue}  -method post   -useragent $useragent -uri 'https://www.reddit.com/api/v1/access_token'
+    $bearer = $token.access_token
+    $geldigheidtoken = (get-date).AddSeconds(86400)
 
-# Build token request
-$credential = "$($ClientId):$($clientsecret)"
-$encodedCreds = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($credential))
-$basicAuthValue = "Basic $encodedCreds"
-$body = "grant_type=password&username=$username&password=$password"
+    # Build Beaerer token and validity output table
+    $return = new-object system.data.datatable
+        # Adding columns
+        [void]$return.Columns.Add("Bearer")
+        [void]$return.Columns.Add("geldigheidtoken")
 
-# Execute token request
-$token = Invoke-RestMethod -body $body -Headers @{Authorization = $basicAuthValue}  -method post   -useragent $useragent -uri 'https://www.reddit.com/api/v1/access_token'
-$bearer = $token.access_token
-$geldigheidtoken = (get-date).AddSeconds(86400)
+        [void]$return.Rows.Add($bearer,$geldigheidtoken)
 
-# Build Beaerer token and validity output table
-$return = new-object system.data.datatable
-    # Adding columns
-    [void]$return.Columns.Add("Bearer")
-    [void]$return.Columns.Add("geldigheidtoken")
+    # Output Bearer token and validity 
+    return $return
 
-    [void]$return.Rows.Add($bearer,$geldigheidtoken)
-
-# Output Bearer token and validity 
-return $return
-
-} # Einde get-reddittoken
+    } # Einde get-reddittoken
 
 # If token not exists, get one
-try {
-    $token = Import-Csv $storage\token.txt
-    if ([bool]$bearer) { Write-Host (get-date) 'Succesfully acquired token' $bearer[40..43]'..., valid until' $geldigheidtoken}
-    }
-    Catch{"Import-Csv: Could not find file"
+try {$token = Import-Csv $storage/"token.txt"}
+catch {$token = Get-reddittoken}
+if ($null -eq $token){
     $token = Get-reddittoken
-    if ([bool]$bearer) { Write-Host (get-date) 'Succesfully acquired token' $bearer[40..43]'..., valid until' $geldigheidtoken}
+    $bearer = $token.Bearer
+    $geldigheidtoken = $token.geldigheidtoken
     }
 
 # If token does exist, check validity and renew if expired
-if ((get-date) -gt $geldigheidtoken) {
+if ((get-date) -gt (get-date($token.geldigheidtoken))) {
     $token = Get-reddittoken
     if ([bool]$bearer) { Write-Host (get-date) 'Succesfully acquired token' $bearer[40..43]'..., valid until' $geldigheidtoken}
 }
@@ -142,10 +112,10 @@ if ((get-date) -gt $geldigheidtoken) {
 #
 # Build headers used for authenticating API request
 $bearer = $token.Bearer
-$geldigheidtoken = (get-date).AddSeconds(84600)
-$token | Export-Csv -Path $storage\token.txt #Export-Csv $token   $storage\token.txt
+$geldigheidtoken = $token.geldigheidtoken
+$token | Export-Csv -Path $storage"token.txt" #Export-Csv $token   $storagetoken.txt
 $headers = @{Authorization="Bearer $bearer"}
-
+write-host (get-date) 'Succesfully acquired token' $bearer[40..43]'..., valid until' $geldigheidtoken
 
 ### Functions
 Function Invoke-Marksnsfwpost {
@@ -154,9 +124,102 @@ param (
 )
 
 # Code block
+if ($author -notmatch 'deleted'){
 invoke-restmethod -Headers $headers -uri "$apiurl/api/marknsfw" -body @{id = $postid} -UserAgent $useragent -method Post
-write-output (get-date)'Marked post NSFW:'$Postid
+}
+else {
+    Write-Host (get-date) "$postid has had account and/or post deleted."
+}
+write-host (get-date)'Marked post NSFW:'$Postid
 } # End function invoke-marknsfwpost
+
+Function New-redditremovalnotice {
+    param (
+    [Parameter (Mandatory = $True)] [String]$postid,
+    [Parameter (Mandatory = $True)] [String]$author,
+    [Parameter (Mandatory = $True)] [String]$Removalreason
+    )
+
+    $removaltext = @"
+Dear /u/$author, 
+
+Your post has been removed for the following reason: $Removalreason
+
+**This is an automated message initiated by a human moderator.** If you have questions or concerns about this removal, please [message the moderators](https://www.reddit.com/message/compose?to=/r/$subname&subject=&message=)
+"@
+    
+    #Build request-body
+    $removalpostbody = @{
+        thing_id = $postid
+        text = $removaltext
+    }
+    # Execute request
+    Invoke-RestMethod "$apiurl/api/comment" -body $removalpostbody -headers $headers -Method POST -useragent $useragent
+    
+    # Give reddit some time to process the comment
+    Start-Sleep -Seconds 5
+    
+    # Sticky removal-comment
+    $success = $false
+    do {$comments = Invoke-RestMethod https://www.reddit.com/u/$username/.json 
+        $comments = $comments.data.children.data
+        $modcomment = $comments[0..0].name
+        if ($comments.link_id -eq $postid){$success = $true}
+            else{
+                Write-Host "$(get-date) Reddit not ready for stickying comment yet"
+                start-sleep -Seconds 5
+            }
+    }
+    until ($success)
+
+    $modcommentbody = @{
+        how = 'yes'
+        id = $modcomment
+        sticky = 'True'
+    }
+    
+    $stickyresult = Invoke-RestMethod "$apiurl/api/distinguish" -body $modcommentbody -headers $headers -Method POST -useragent $useragent
+    write-host "$(get-date) Modnote sticky result: $($stickyresult.success)"
+
+    # Output log
+    write-host (Get-date)'Added removal reason for actioned post:' $postid
+    # Append post name to actioned list
+    } # End new Reddit removal notice
+
+Function New-redditremovalmodmail {
+    param (
+    [Parameter (Mandatory = $True)] [String]$author,
+    [Parameter (Mandatory = $True)] [String]$Removalreason,
+    [Parameter (Mandatory = $True)] [String]$RemovalSubject,
+    [Parameter (Mandatory = $True)] [String]$subname
+    )
+    
+    $mailbody = @"
+Dear $author, your post has been removed for the following reason: 
+$Removalreason 
+
+**This is an automated message as a result of a human moderator's action**, if you have questions or concerns about this removal, please [message the moderators](https://www.reddit.com/message/compose?to=/r/$subname&subject=&message=)
+"@
+
+
+
+    #Build request-body
+    $modmailbody = @{
+        body	        = $mailbody
+        isAuthorHidden	= $true
+        srName	        = $subname
+        subject	        = $RemovalSubject
+        to          	= $author
+    }
+
+    # Execute request
+    Invoke-RestMethod "$apiurl/api/mod/conversations" -headers $headers -Method POST -useragent $useragent -body $modmailbody 
+
+
+    # Output log
+    # Append post name to actioned list
+    } # End new Reddit removal notice
+
 
 Function New-redditmodnote {
 param (
@@ -167,13 +230,19 @@ param (
 )
 
 #Build request-body
-$modnotebody = @{note = "Flair_mod - " + $link_flair_text
+$modnotebody = @{note = $link_flair_text
 reddit_id = $postid
 subreddit = $subreddit_modnote
 user = $author
 }   
 # Execute request
+
+if ($author -notmatch 'deleted'){
 Invoke-RestMethod "$apiurl/api/mod/notes" -body $modnotebody -headers $headers -Method POST -useragent $useragent
+}
+else{
+    Write-host (get-date) "$postid author has deleted acccount and/or post, can't add note."
+}
 
 # Output log
 Write-Host (Get-date)'Added mod-note for actioned post:' $postid $link_flair_text 
@@ -198,201 +267,147 @@ param (
 
 # Code block
 invoke-restmethod -Headers $headers -uri "$apiurl/api/remove" -body @{id = $postid; spam = $spam} -UserAgent $useragent -method Post
-Write-output (get-date)'Removed post:'  $postid
+Write-host (get-date)'Removed post:'  $postid
 } # End function Remove-redditpost
 
-# Function Invoke-redditban {
-# param (
-# [Parameter (Mandatory = $True)] [String]$user,
-# [Parameter (Mandatory = $True)] [String]$container,
-# [Parameter (Mandatory = $True)] [String]$duration,
-# [Parameter (Mandatory = $True)] [String]$reason
-# )
+Function Invoke-redditban {
+    param (
+    [Parameter (Mandatory = $True)] [String]$user,
+    [Parameter (Mandatory = $True)] [String]$container,
+    [Parameter (Mandatory = $True)] [String]$duration,
+    [Parameter (Mandatory = $True)] [String]$reason,
+    [Parameter (Mandatory = $True)] [String]$tag
+    )
+    
+    # Code block
+    $body = @{
+    ban_reason=$tag
+    ban_message=$reason
+    name=$user
+    note=$reason
+    type="banned"
+    }
+    if ($duration -ne 'False') {$body += @{duration = $duration} }
+    
+    # Perform the ban    
+    $banoutput = invoke-restmethod -Headers $headers -uri "$oauthsubreddit/api/friend" -body $body -UserAgent $useragent -method Post
+    
+    # Output success
+    write-host (get-date)"Banned user: $user" 'for' $reason 'with result' $banoutput.success
+    } # End function invoke-redditban
 
-# # Code block
-# $body = @{
-# ban_reason=$reason
-# ban_message=$reason
-# name=$user
-# note=$reason
-# type="banned"
-# }
-# if ($duration -ne 'False') {$body += @{duration = $duration} }
 
-# # Perform the ban    
-# invoke-restmethod -Headers $headers -uri "$oauthsubreddit/api/friend" -body $body -UserAgent $useragent -method Post
+## End functions
 
-# # Output success
-# write-host (get-date)"Banned user: $user" 'for' $reason
-
-# } # End function invoke-redditban
-
-
-### End functions
-
-# Uitgeschakeld vanwege scheduled task while ($true){
-    clear-host
+### Start main script
     # Get-actioned (nsfw) posts
     write-host  (Get-Date) 'Checking log.'
-    $actionedposts = get-content $storage\actionedposts.txt
-    $actionednsfw =  get-content $storage\actionedNSFWposts.txt
-    Write-host (get-date) $actionedposts.count 'previously actioned posts and' $actionednsfw.count 'locked NSFW posts'
+    $actionedposts = get-content $storage"actionedposts.txt"
 
-    # Get posts
-    $postoutput = invoke-restmethod "$subreddit/new/.json?limit=100"
+    write-host (get-date) $actionedposts.count 'previously actioned posts.'
 
-    # Get relevant data
-    $posts = $postoutput.data.children.data
-    Write-Host (get-date) 'Succesfully retrieved' $posts.count 'posts, checking for action flairs.'
-
-    # Get action flairs
-    $action = Invoke-Sqlcmd -ServerInstance localhost -Database Reddit -Query "select * from Flairs$subname"
-    if ($action -eq $null){write-host (get-date) "SQL niet bereikbaar."; break}
+    # Get action flairs from wiki on subreddit
+    $iwr = Invoke-WebRequest -uri "$oauthsubreddit/wiki/flair_bot" -Headers $headers -UserAgent $useragent  -Method GET
+    $action = $iwr.Content | ConvertFrom-Json
     
-    # Loop through all posts
-    foreach ($post in $posts){
+    # Check rate limit status
+    write-host (get-date) "Remaining rate limit: $($iwr.Headers.'x-ratelimit-remaining')"
+    if ($iwr.Headers.'x-ratelimit-remaining'.split('.')[0] -lt 10) { start-sleep -Seconds [int]$iwr.Headers.'x-ratelimit-reset'[0]}
 
-            
-    # Check if post is unactioned
-    if ($post.name -notin $actionedposts) {$unactioned = $true}
+    # Assuming CSV delimited format, adapt to format of your own choosing.
+    $action = $action.data.content_md | ConvertFrom-Csv -Delimiter ';'
+
+    # Check flairs, break on $null
+    if ($null -eq $action){write-host (get-date) "Could not read action-flairs."; break}
+
+    $lastmod = $actionedposts | Select-Object -Last 1
+
+    # Get posts with edited flair to find action-flairs
+    $moderatedposts = Invoke-RestMethod "$oauthsubreddit/about/log?before=$lastmod&type=editflair"  -Headers $headers -UserAgent $useragent
+    $moderatedposts = $moderatedposts.data.children.data | Where-Object {$_.id -notin $actionedposts}
+
+
+    write-host (get-date) 'Found' $moderatedposts.count 'unactioned posts with flair, checking for actionflairs.'
     
-    # Clear Postaction to prevent crosscontamination
-    $postaction = $false
-    
-    # Check if post has action flair
-    if ($post.link_flair_template_id -in $action.flair_id){$actionflair = $true}
-    if ($actionflair -and $unactioned){
-        $postaction = $action | Where-Object {$_.link_flair_template_id -match $action.flair_id}
-        Write-host (get-date) 'Post' $post.name 'has actionflair' $post.flair_tag $post.link_flair_text
-    }
-
-
-    # If post NSFW and not in actionlist
-    if (($post.over_18 -eq 'True') -AND ($post.name -notin $actionednsfw)){
-        if (($post.url -match '.jpg') -or ($post.url -match '.gif') -or ($post.url -match '.png')){
-            Invoke-WebRequest -uri ($post.url) -OutFile $storage\temp.jpg
-            $safety = python C:\Users\keesk\Powershell\nudenet-ding.py | ConvertFrom-Json
-            if (($safety.'C:/temp/crossdressing/temp.jpg'.safe) -lt 0.2) {
-                Write-host (Get-Date)'Nudenet probability of NSFW over 0.8'
-                Lock-redditpost -Postid $post.name
-                New-redditmodnote -postid $post.name -author $post.author -subreddit_modnote $subname -link_flair_text "Locked post, marked NSFW by user/reddit and nudenet reports high NSFW chance."
-            }
-        # Add post to actionedNSFW, even if nudenet didn't hit to prevent repeating downloads
-        $post.name | Out-File $storage\actionedNSFWposts.txt -Append
-        }
-        else {Write-host (get-date)$post.url 'is not an image'}
-    }
-    # # If post NSFW and not in actionlist
-    # if (($post.over_18 -eq 'True') -AND ($post.name -notin $actionednsfw)){
-    #     Lock-redditpost -Postid $post.name
-    #     $post.name | Out-File $storage\actionedNSFWposts.txt -Append
-    # }
-
-    # Skip this object is no action
-    if ($unactioned -and $actionflair){
-
-        Lock-redditpost -postid $post.name
-        new-redditmodnote -postid $post.name -link_flair_text $post.link_flair_text `
-                -author $post.author -subreddit_modnote $post.subreddit_name_prefixed
+    foreach ($post in $moderatedposts){
+        # Export to message queue
+        $post | ConvertTo-Json -Depth 10 | Out-File $storage\queue\$($post.id).json -Encoding utf8
         
-        # Log output the locked post
-        Write-host (get-date) "The following post has been locked and removed:" $post.name
+        # Get posts
+        $posturl = $post.target_permalink
 
-        Remove-redditpost -postid $post.name -spam $postaction.spam
-        if ($postaction.nsfw -eq 'True') {
-            Invoke-Marksnsfwpost -postid $post.name; Write-host (get-date) "The following NSFW post has been locked:" $post.name
-            Lock-redditpost -postid $post.name
-        } # End NSFW actionposts
-
-        if ($postaction.Ban -eq 'True') {
-                Invoke-redditban -user $post.author -duration $postaction.ban_duration -container $post.subreddit -reason $postaction.removal_reason
-                # Log output the locked post
-                    Write-host (get-date) "The following user has banned:" $post.user
-                }
+        # Get the Post content
+        $postoutput = invoke-restmethod "$apiurl/$posturl" -Headers $headers -UserAgent $useragent
+        $postoutput = $postoutput.data.children.data | where-object {$_.name -match 't3_'}
         
-        # Write output
-        write-host (get-date) $post.name $post.link_flair_text
-        
-        # Clear action variable to prevent cross-post contamination
-        if ($unactioned -and $actionflair){
-        # Append post ID to prevent duplicate actions
-        $action.flair_tag + $post.name | Out-File $storage\actionedposts.txt -Append
-        Write-Host (Get-Date) 'The following post has been added to actioned-log' $post.name + $postaction.flair_tag 
-        
-        clear-variable actionflair, unactioned
-        }
+        # Check for action flair, skip the rest if not 
+        if ($postoutput.link_flair_template_id -in $action.flair_id){
 
-        } # End if (if action-tag = take action)
-    }   #End foreach loop
-    Write-host (Get-date) 'Checking posts done.'
+            write-host (get-date) 'Succesfully retrieved unactioned post' $postoutput.name 'with flair' $postoutput.link_flair_template_id
 
-
-    # /r/$subname specific
-    # Read spammed posts to add mod-note for removal reason
-    $spammed = invoke-restmethod -Headers $headers -uri "$oauthsubreddit/about/spam?only=links&limit=100" -UserAgent $useragent -method GET
-    ## Filter out posts that don't have flairs
-    $spammed = $spammed.data.children.data | Where-Object {$_.link_flair_template_id -match "-"}
-    Write-Host (get-date) 'Succesfully retrieved'$spammed.count 'spammed posts with a flair, checking for action-flairs.'
-    
-    
-
-    ## Output post details for removal reason
-    $modnoteableposts = $spammed | Where-Object -Property link_flair_template_id -in -Value $action.flair_id | Select-Object Name, Removed_by, link_flair_text, subreddit, author, created
-    # Loop through posts that need a modnote
-    foreach ($tomodnote in $modnoteableposts){
-        # Check if already actioned
-        if ($tomodnote.name -notin $actionedposts) {
             # Clear Postaction to prevent crosscontamination
             $postaction = $false
-    
-            # Check for action-flairs
-                if ($tomodnote.link_flair_template_id -in $action.flair_id) {
-                    $postaction = $action | Where-Object {$_.flair_id -match $tomodnote.link_flair_template_id
-                    if ($postaction.nsfw -eq 'True') {Invoke-Marksnsfwpost -Postid $tomodnote.name}
-                    }
-                }
-            
-            #Build request-body
-            $modnotebody = @{note = "Flair_mod - " + $tomodnote.link_flair_text
-                reddit_id = $tomodnote.name
-                subreddit = $tomodnote.subreddit
-                user = $tomodnote.author
-                } 
-            # Execute request
-                $modnoteresult = Invoke-RestMethod "$apiurl/api/mod/notes" -body $modnotebody -headers $headers -Method POST -useragent $useragent
-                if ([bool]$modnoteresult) {
-                    # Output log
-                    $tomodnote.name | Out-File $storage\actionedposts.txt -Append
-                    Write-Host (Get-date)'Added mod-note for actioned post:' $tomodnote.name $tomodnote.author
-                }
-                    else {
-                        Write-Host (get-date)'Mod note posting failed'
-                    }
+            $postaction = $action | Where-Object {$postoutput.link_flair_template_id -match $_.flair_id }
+
+            # If postaction, take action
+            # Replace {{mod}} with moderator name
+            $postaction.Mod_note = $postaction.Mod_note -replace("{{mod}}",$post.mod)
+
+            if ([bool]$postaction){
                 
-        } # End-if check already actiond
-    } # End foreach tomodnote loop
-    Write-host (Get-Date)'Checking action flaired posts done.'
+                # Lock the post in question
+                 Lock-redditpost -postid $postoutput.name
+                
+                # Modnote splat
+                $modnotesplat = @{
+                    postid = $postoutput.name 
+                    link_flair_text = $postaction.mod_note 
+                    author = $postoutput.author 
+                    subreddit_modnote = $post.subreddit_name_prefixed
+                }
+                
+                # Create a mod-note                
+                new-redditmodnote @modnotesplat
+                
+                        # Remove the post
+                Remove-redditpost -postid $postoutput.name -spam $postaction.spam
+                
+                 if ($postaction.nsfw -eq 'True') {
+                      Invoke-Marksnsfwpost -postid $postoutput.name
+                   } # End NSFW actiowhilnposts
+                
+                ## Disabled while flair_helper still active
+                if ($postaction.Ban -eq 'True') {
+                      write-host (get-date) "Debuggin for 7d ban filtered posts:" $postaction
+                      write-host "Invoke-redditban -user "$postoutput.author "-container" $postoutput.subreddit "-reason" $postaction.removal_reason "-duration" $postaction.Ban_duration "-tag" $postaction.Mod_note
+                      Invoke-redditban -user $postoutput.author -container $postoutput.subreddit -reason $postaction.removal_reason -duration $postaction.Ban_duration -tag $postaction.Mod_note
+                      }
+                
+                # Write log output
+                write-host (get-date) 'Unactioned post =' $postoutput.name '- action reason:' $postoutput.link_flair_text
 
-    # Clearing variables for (spammed) posts to prevent contamination
-    Write-host (get-date)'Cleared post variables'
-    Clear-Variable posts, post, spammed
+                # Add removal notice
+                write-host (Get-Date) $postoutput.author 'and' $postoutput.name 'for debugging'
+           
+                 #RemovalNotice: Collect the variables needed
+                 $noticesplat = @{
+                    postid         = $postoutput.name
+                    RemovalReason  = $postaction.Removal_reason
+                    author         = $postoutput.author
+                }
+                        
+                #RemovalNotice: Execute the request
+                New-redditremovalnotice @noticesplat 
+            
+            } #End if postaction gevuld
 
-    # Output status and wait for 5 minutes
-    Write-host (get-date) 'All done.'
+            # # Append post to actioned list
+            $post.id | Out-File $storage"actionedposts.txt" -Append
+            write-host (Get-Date) 'The following post has been added to actioned-log' $postoutput.name + $postaction.mod_note 
+            clear-variable postaction
+            } # End if post unactioned and actionflair
+            else {write-host (get-date) "Flair for post $($postoutput.name) is not actionable, skipping"}
+            clear-variable post, postoutput
 
-# Disabled because of scheduled task
-    #     Start-Sleep -seconds 300
-#     clear-host
-
-#     #Check token validity and renew if expired
-#     Write-host (get-date) 'Checking validity of token' $geldigheidtoken
-#     if ((get-date) -gt $geldigheidtoken) {
-#         $geldigheidtoken = Get-reddittoken
-#         $bearer = $token.Bearer
-#         $geldigheidtoken = $token.geldigheidtoken
-
-#         # Update headers used for authenticating API request
-#         $headers = @{Authorization="Bearer $bearer"}
-#     } # End check and refresh token
-
-# } # Ende while loop
+    }   #End foreach $post in $posts loop 
+    write-host (Get-date) 'Actioning posts done.'
